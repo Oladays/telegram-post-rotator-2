@@ -20,19 +20,27 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          pip install requests
 
-      - name: Run bot
+      - name: Run Telegram rotator
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           NEW_CHANNEL_ID: ${{ secrets.NEW_CHANNEL_ID }}
           OLD_CHANNEL_ID: ${{ secrets.OLD_CHANNEL_ID }}
-        run: python fetch_and_post.py
-
-      - name: Commit updated pool.json
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          python fetch_and_post.py
+
+      - name: Save updated pool
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add pool.json
-          git diff --cached --quiet || git commit -m "Update pool"
-          git push
+
+          if git diff --cached --quiet; then
+            echo "No pool changes to save."
+          else
+            git commit -m "Update Telegram post pool"
+            git push
+          fi
