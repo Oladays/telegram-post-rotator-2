@@ -2,49 +2,38 @@ import os
 import json
 import random
 import requests
-
+import time
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 NEW_CHANNEL_ID = str(os.environ["NEW_CHANNEL_ID"])
 OLD_CHANNEL_ID = str(os.environ["OLD_CHANNEL_ID"])
 
 POOL_FILE = "pool.json"
-
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 
-# ============================================================
-# TELEGRAM API
-# ============================================================
-
-def telegram(method, **kwargs):
-
+def telegram(method, data):
     response = requests.post(
         f"{API}/{method}",
-        json=kwargs,
+        data=data,
         timeout=30
     )
 
+    if not response.ok:
+        print(f"Telegram HTTP error {response.status_code}: {response.text}")
+
     response.raise_for_status()
 
-    data = response.json()
+    result = response.json()
 
-    if not data.get("ok"):
-        raise RuntimeError(
-            f"Telegram API error: {data}"
-        )
+    if not result.get("ok"):
+        raise Exception(f"Telegram API error: {result}")
 
-    return data["result"]
+    return result["result"]
 
-
-# ============================================================
-# POOL
-# ============================================================
 
 def load_pool():
-
     if not os.path.exists(POOL_FILE):
-
         pool = {
             "last_update_id": 0,
             "last_posted_id": None,
@@ -53,18 +42,11 @@ def load_pool():
         }
 
         save_pool(pool)
-
         return pool
 
-    with open(
-        POOL_FILE,
-        "r",
-        encoding="utf-8"
-    ) as f:
-
+    with open(POOL_FILE, "r", encoding="utf-8") as f:
         pool = json.load(f)
 
-    # Make sure older pool files get the new fields
     if "last_update_id" not in pool:
         pool["last_update_id"] = 0
 
@@ -81,13 +63,7 @@ def load_pool():
 
 
 def save_pool(pool):
-
-    with open(
-        POOL_FILE,
-        "w",
-        encoding="utf-8"
-    ) as f:
-
+    with open(POOL_FILE, "w", encoding="utf-8") as f:
         json.dump(
             pool,
             f,
@@ -96,241 +72,243 @@ def save_pool(pool):
         )
 
 
-# ============================================================
-# MEDIA INFORMATION
-# ============================================================
-
 def get_media_info(message):
 
     if message.get("photo"):
-
-        photo = message["photo"][-1]
-
-        return (
-            photo["file_id"],
-            "photo"
-        )
+        return message["photo"][-1]["file_id"], "photo"
 
     if message.get("video"):
-
-        return (
-            message["video"]["file_id"],
-            "video"
-        )
+        return message["video"]["file_id"], "video"
 
     if message.get("document"):
-
-        return (
-            message["document"]["file_id"],
-            "document"
-        )
+        return message["document"]["file_id"], "document"
 
     if message.get("animation"):
-
-        return (
-            message["animation"]["file_id"],
-            "animation"
-        )
+        return message["animation"]["file_id"], "animation"
 
     if message.get("audio"):
-
-        return (
-            message["audio"]["file_id"],
-            "audio"
-        )
+        return message["audio"]["file_id"], "audio"
 
     if message.get("voice"):
-
-        return (
-            message["voice"]["file_id"],
-            "voice"
-        )
+        return message["voice"]["file_id"], "voice"
 
     return None, None
 
 
-# ============================================================
-# FETCH NEW POSTS FROM NEW CHANNEL
-# ============================================================
-
 def fetch_new_messages(pool):
 
     print("=" * 55)
-    print("TELEGRAM POST ROTATOR")
+    print("CHECKING FOR NEW TELEGRAM POSTS")
     print("=" * 55)
 
-    print("CHECKING SOURCE CHANNEL")
-    print("Source:", NEW_CHANNEL_ID)
-    print("Destination:", OLD_CHANNEL_ID)
+    last_update_id = pool.get("last_update_id", 0)
 
-    last_update_id = pool.get(
-        "last_update_id",
-        0
+    print("Source channel:", NEW_CHANNEL_ID)
+    print("Destination channel:", OLD_CHANNEL_ID)
+    print("Last update ID:", last_update_id)
+
+    params = {
+        "offset": last_update_id + 1,
+        "limit": 100,
+        "timeout": 10,
+        "allowed_updates": json.dumps(["channel_post"])
+    }
+
+    response = requests.get(
+        f"{API}/getUpdates",
+        params=params,
+        timeout=30
     )
 
-    print(
-        "Last update:",
-        last_update_id
-    )
+    response.raise_for_status()
 
-    offset = last_update_id + 1
+    data = response.json()
 
-    updates = telegram(
-        "getUpdates",
-        offset=offset,
-        limit=100,
-        allowed_updates=["channel_post"]
-    )
+    if not data.get("ok"):
+        raise Exception(f"getUpdates failed: {data}")
 
-    print(
-        "Updates received:",
-        len(updates)
-    )
+    updates = data.get("result", [])
 
-    print(
-        "Pool size before:",
-        len(pool["messages"])
-    )
+    print("Updates received:", len(updates))
 
     newest_update_id = last_update_id
 
+    # --------------------------------------------------------
+    # Temporary album collection.
+    #
+    # Telegram may deliver the pictures of one album as
+    # separate updates. We collect them together here.
+    # --------------------------------------------------------
+
+    new_albums = {}
+
     for update in updates:
 
-        update_id = update.get(
-            "update_id"
-        )
+        update_id = update.get("update_id")
 
         if update_id is None:
             continue
 
-        # Always move the pointer forward
         newest_update_id = max(
             newest_update_id,
             update_id
         )
 
-        post = update.get(
-            "channel_post"
-        )
+        message = update.get("channel_post")
 
-        if not post:
+        if not message:
             continue
-
-        chat = post.get(
-            "chat",
-            {}
-        )
 
         chat_id = str(
-            chat.get("id")
+            message.get("chat", {}).get("id")
         )
 
-        message_id = post.get(
-            "message_id"
-        )
-
-        print("----------------------------------------")
-        print("Channel:", chat_id)
-        print("Message ID:", message_id)
-
-        # ONLY FETCH FROM NEW CHANNEL
+        # ONLY read from NEW CHANNEL
         if chat_id != NEW_CHANNEL_ID:
-
             print(
-                "Skipped: different channel"
+                "Skipping different channel:",
+                chat_id
             )
-
             continue
 
-        if message_id is None:
-            continue
+        message_id = message.get("message_id")
 
-        # Don't add duplicates
-        existing_ids = {
-            str(item.get("id"))
-            for item in pool["messages"]
-        }
-
-        if str(message_id) in existing_ids:
-
-            print(
-                "Already in pool:",
-                message_id
-            )
-
-            continue
-
-        # Text or caption
         text = (
-            post.get("text")
-            or post.get("caption")
+            message.get("text")
+            or message.get("caption")
             or ""
         )
 
-        # Media
-        file_id, media_type = get_media_info(
-            post
-        )
+        file_id, media_type = get_media_info(message)
 
-        # Telegram album ID
-        media_group_id = post.get(
+        media_group_id = message.get(
             "media_group_id"
         )
 
-        # Ignore completely empty messages
-        if not text and not file_id:
+        # ====================================================
+        # ALBUM
+        # ====================================================
+
+        if media_group_id:
+
+            group_key = str(media_group_id)
+
+            if group_key not in new_albums:
+                new_albums[group_key] = []
+
+            new_albums[group_key].append({
+                "id": message_id,
+                "file_id": file_id,
+                "media_type": media_type,
+                "text": text
+            })
 
             print(
-                "Skipped: empty post"
+                f"Album item received: {message_id} "
+                f"(group {group_key})"
             )
 
             continue
 
-        new_message = {
+        # ====================================================
+        # NORMAL SINGLE POST
+        # ====================================================
+
+        existing = any(
+            str(item.get("id")) == str(message_id)
+            for item in pool["messages"]
+        )
+
+        if existing:
+            print(
+                f"Message {message_id} already in pool."
+            )
+            continue
+
+        if not text and not file_id:
+            print(
+                f"Skipping empty message {message_id}"
+            )
+            continue
+
+        pool["messages"].append({
+            "type": "single",
             "id": message_id,
             "text": text,
             "file_id": file_id,
-            "media_type": media_type,
-            "media_group_id": media_group_id
+            "media_type": media_type
+        })
+
+        print(
+            f"NEW SINGLE POST ADDED: {message_id}"
+        )
+
+    # ========================================================
+    # SAVE ALBUMS AS ONE POOL ITEM
+    # ========================================================
+
+    for group_id, items in new_albums.items():
+
+        # Sort according to Telegram message ID
+        items.sort(
+            key=lambda x: int(x["id"])
+        )
+
+        # Check whether this album already exists
+        album_exists = any(
+            str(item.get("media_group_id"))
+            == group_id
+            for item in pool["messages"]
+            if item.get("type") == "album"
+        )
+
+        if album_exists:
+            print(
+                f"Album {group_id} already exists."
+            )
+            continue
+
+        # Use the first non-empty caption
+        album_caption = ""
+
+        for item in items:
+            if item.get("text"):
+                album_caption = item["text"]
+                break
+
+        album = {
+            "type": "album",
+            "id": f"album_{group_id}",
+            "media_group_id": group_id,
+            "text": album_caption,
+            "items": items
         }
 
-        pool["messages"].append(
-            new_message
-        )
+        pool["messages"].append(album)
 
+        print("----------------------------------------")
         print(
-            "NEW POST ADDED:",
-            message_id
+            f"NEW ALBUM ADDED: {group_id}"
         )
-
         print(
-            "Type:",
-            media_type or "text"
+            "Album items:",
+            len(items)
         )
-
         print(
-            "Media group:",
-            media_group_id or "None"
+            "Caption:",
+            album_caption[:150]
         )
 
-        print(
-            "Text:",
-            text[:150]
-        )
-
-    # IMPORTANT
-    # Move update pointer only after processing everything
     pool["last_update_id"] = newest_update_id
 
     print("----------------------------------------")
-
     print(
-        "Updated last_update_id:",
+        "New last update ID:",
         pool["last_update_id"]
     )
 
     print(
-        "Pool size after:",
+        "Total pool items:",
         len(pool["messages"])
     )
 
@@ -339,95 +317,42 @@ def fetch_new_messages(pool):
     return pool
 
 
-# ============================================================
-# SEND NORMAL SINGLE MESSAGE
-# ============================================================
-
-def send_message(message):
+def send_single(message):
 
     message_id = message["id"]
 
-    print("=" * 55)
-    print("POSTING SINGLE MESSAGE")
     print(
-        "Message:",
+        "Posting single message:",
         message_id
     )
 
-    print(
-        "Destination:",
-        OLD_CHANNEL_ID
-    )
-
-    # --------------------------------------------------------
-    # Try copyMessage first
-    # --------------------------------------------------------
-
+    # First try copyMessage.
     try:
 
-        result = telegram(
+        telegram(
             "copyMessage",
-            chat_id=OLD_CHANNEL_ID,
-            from_chat_id=NEW_CHANNEL_ID,
-            message_id=message_id
+            {
+                "chat_id": OLD_CHANNEL_ID,
+                "from_chat_id": NEW_CHANNEL_ID,
+                "message_id": message_id
+            }
         )
 
-        print(
-            "copyMessage successful."
-        )
-
-        print(
-            "New message ID:",
-            result.get("message_id")
-        )
+        print("Single message copied successfully.")
 
         return True
 
     except Exception as error:
 
         print(
-            "copyMessage failed:"
+            "copyMessage failed:",
+            error
         )
 
-        print(error)
-
-    # --------------------------------------------------------
     # Fallback
-    # --------------------------------------------------------
-
-    text = message.get(
-        "text"
-    ) or ""
-
-    file_id = message.get(
-        "file_id"
-    )
-
-    media_type = message.get(
-        "media_type"
-    )
-
-    if not file_id:
-
-        if not text:
-
-            print(
-                "Nothing to send."
-            )
-
-            return False
-
-        telegram(
-            "sendMessage",
-            chat_id=OLD_CHANNEL_ID,
-            text=text
-        )
-
-        print(
-            "Text message sent successfully."
-        )
-
-        return True
+    text = message.get("text") or ""
+    file_id = message.get("file_id")
+    media_type = message.get("media_type")
 
     try:
 
@@ -441,10 +366,7 @@ def send_message(message):
             if text:
                 data["caption"] = text
 
-            telegram(
-                "sendPhoto",
-                **data
-            )
+            telegram("sendPhoto", data)
 
         elif media_type == "video":
 
@@ -456,10 +378,7 @@ def send_message(message):
             if text:
                 data["caption"] = text
 
-            telegram(
-                "sendVideo",
-                **data
-            )
+            telegram("sendVideo", data)
 
         elif media_type == "document":
 
@@ -471,10 +390,7 @@ def send_message(message):
             if text:
                 data["caption"] = text
 
-            telegram(
-                "sendDocument",
-                **data
-            )
+            telegram("sendDocument", data)
 
         elif media_type == "animation":
 
@@ -486,10 +402,7 @@ def send_message(message):
             if text:
                 data["caption"] = text
 
-            telegram(
-                "sendAnimation",
-                **data
-            )
+            telegram("sendAnimation", data)
 
         elif media_type == "audio":
 
@@ -501,10 +414,7 @@ def send_message(message):
             if text:
                 data["caption"] = text
 
-            telegram(
-                "sendAudio",
-                **data
-            )
+            telegram("sendAudio", data)
 
         elif media_type == "voice":
 
@@ -516,202 +426,127 @@ def send_message(message):
             if text:
                 data["caption"] = text
 
-            telegram(
-                "sendVoice",
-                **data
-            )
+            telegram("sendVoice", data)
 
         else:
 
-            print(
-                "Unknown media type."
+            telegram(
+                "sendMessage",
+                {
+                    "chat_id": OLD_CHANNEL_ID,
+                    "text": text
+                }
             )
 
-            return False
-
-        print(
-            "Direct media send successful."
-        )
+        print("Single message sent successfully.")
 
         return True
 
     except Exception as error:
 
         print(
-            "Direct media send failed:"
+            "Fallback failed:",
+            error
         )
-
-        print(error)
 
         return False
 
 
-# ============================================================
-# SEND ALBUM / MULTIPLE PICTURES
-# ============================================================
-
 def send_album(album):
+
+    items = album.get("items", [])
+
+    if not items:
+        print("Album contains no items.")
+
+        return False
 
     print("=" * 55)
     print("POSTING ALBUM")
     print(
-        "Pictures:",
-        len(album)
+        "Album:",
+        album.get("media_group_id")
     )
-
     print(
-        "Destination:",
-        OLD_CHANNEL_ID
+        "Items:",
+        len(items)
     )
 
-    media = []
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # We copy every Telegram message belonging to the album.
+    #
+    # This prevents one picture from being left behind and
+    # later treated as a separate random post.
+    # --------------------------------------------------------
 
-    for index, message in enumerate(album):
+    successful = 0
 
-        file_id = message.get(
-            "file_id"
-        )
+    for item in items:
 
-        media_type = message.get(
-            "media_type"
-        )
+        message_id = item["id"]
 
-        text = message.get(
-            "text"
-        ) or ""
+        try:
 
-        if not file_id:
-            continue
-
-        # Telegram media groups support photo/video
-        if media_type not in (
-            "photo",
-            "video"
-        ):
-
-            print(
-                "Skipping unsupported album media:",
-                media_type
+            telegram(
+                "copyMessage",
+                {
+                    "chat_id": OLD_CHANNEL_ID,
+                    "from_chat_id": NEW_CHANNEL_ID,
+                    "message_id": message_id
+                }
             )
 
-            continue
+            successful += 1
 
-        item = {
-            "type": media_type,
-            "media": file_id
-        }
+            print(
+                f"Copied album item {message_id}"
+            )
 
-        # Caption goes on the first item
-        if index == 0 and text:
+        except Exception as error:
 
-            item["caption"] = text
+            print(
+                f"Failed album item {message_id}:",
+                error
+            )
 
-        media.append(
-            item
-        )
+    print(
+        f"Album copied: {successful}/{len(items)}"
+    )
 
-    if not media:
+    return successful == len(items)
 
-        print(
-            "No usable album media."
-        )
-
-        return False
-
-    try:
-
-        result = telegram(
-            "sendMediaGroup",
-            chat_id=OLD_CHANNEL_ID,
-            media=json.dumps(media)
-        )
-
-        print(
-            "ALBUM POSTED SUCCESSFULLY."
-        )
-
-        print(
-            "Items sent:",
-            len(result)
-        )
-
-        return True
-
-    except Exception as error:
-
-        print(
-            "Album posting failed:"
-        )
-
-        print(error)
-
-        return False
-
-
-# ============================================================
-# RANDOM POST SELECTION
-# ============================================================
 
 def post_random_message(pool):
 
     if not pool["messages"]:
 
-        print(
-            "No messages available."
-        )
+        print("No messages available.")
 
         return pool
 
     print("=" * 55)
-    print("CHOOSING A RANDOM POST")
+    print("CHOOSING RANDOM POST")
+    print("=" * 55)
 
     last_posted_id = pool.get(
         "last_posted_id"
     )
 
-    last_posted_group_id = pool.get(
-        "last_posted_group_id"
-    )
-
     # --------------------------------------------------------
-    # Build groups that have already been posted
+    # Every album is ONE item in pool["messages"].
+    #
+    # Therefore the bot can never randomly select one
+    # individual picture from an album.
     # --------------------------------------------------------
 
-    available = []
+    available = [
+        item
+        for item in pool["messages"]
+        if item.get("id") != last_posted_id
+    ]
 
-    for message in pool["messages"]:
-
-        message_id = str(
-            message.get("id")
-        )
-
-        group_id = message.get(
-            "media_group_id"
-        )
-
-        # Don't immediately post the exact same message
-        if (
-            last_posted_id is not None
-            and message_id == str(last_posted_id)
-        ):
-            continue
-
-        # Don't pick another picture from the album
-        # that was just posted
-        if (
-            group_id
-            and last_posted_group_id
-            and str(group_id)
-            == str(last_posted_group_id)
-        ):
-            continue
-
-        available.append(
-            message
-        )
-
-    # If everything was filtered out,
-    # allow the pool again
     if not available:
 
         available = pool["messages"]
@@ -720,156 +555,94 @@ def post_random_message(pool):
         available
     )
 
-    media_group_id = choice.get(
-        "media_group_id"
+    print(
+        "Selected:",
+        choice.get("id")
+    )
+
+    print(
+        "Type:",
+        choice.get("type")
     )
 
     # ========================================================
     # ALBUM
     # ========================================================
 
-    if media_group_id:
-
-        album = [
-            message
-            for message in pool["messages"]
-            if str(
-                message.get("media_group_id")
-            )
-            == str(media_group_id)
-        ]
-
-        # Keep original Telegram order
-        album.sort(
-            key=lambda x: int(
-                x["id"]
-            )
-        )
-
-        print("----------------------------------------")
-
-        print(
-            "ALBUM DETECTED"
-        )
-
-        print(
-            "Media group:",
-            media_group_id
-        )
-
-        print(
-            "Pictures:",
-            len(album)
-        )
+    if choice.get("type") == "album":
 
         success = send_album(
-            album
+            choice
         )
 
-        if success:
-
-            # Store the whole album as posted
-            pool["last_posted_id"] = album[-1]["id"]
-
-            pool["last_posted_group_id"] = (
-                media_group_id
-            )
-
-            print(
-                "Album marked as posted."
-            )
-
-        else:
-
-            print(
-                "Album failed."
-            )
-
-        return pool
-
     # ========================================================
-    # NORMAL SINGLE POST
+    # SINGLE
     # ========================================================
 
-    print("----------------------------------------")
+    else:
 
-    print(
-        "SINGLE POST"
-    )
-
-    print(
-        "Selected message:",
-        choice["id"]
-    )
-
-    print(
-        "Type:",
-        choice.get("media_type")
-    )
-
-    print(
-        "Text:",
-        (
-            choice.get("text")
-            or ""
-        )[:150]
-    )
-
-    success = send_message(
-        choice
-    )
+        success = send_single(
+            choice
+        )
 
     if success:
 
         pool["last_posted_id"] = (
-            choice["id"]
+            choice.get("id")
         )
 
-        pool["last_posted_group_id"] = None
+        if choice.get("type") == "album":
+
+            pool["last_posted_group_id"] = (
+                choice.get("media_group_id")
+            )
+
+        else:
+
+            pool["last_posted_group_id"] = None
 
         print(
             "POSTED SUCCESSFULLY:",
-            choice["id"]
+            choice.get("id")
         )
 
     else:
 
         print(
-            "Post failed."
+            "POST FAILED."
+        )
+
+        print(
+            "last_posted_id was NOT changed."
         )
 
     return pool
 
 
-# ============================================================
-# MAIN
-# ============================================================
-
 def main():
 
     pool = load_pool()
 
-    # Fetch new posts from NEW CHANNEL
+    # 1. Collect new posts
     pool = fetch_new_messages(
         pool
     )
 
-    # Randomly select and post to OLD CHANNEL
+    # 2. Choose ONE post
     pool = post_random_message(
         pool
     )
 
-    # Save everything
+    # 3. Save the updated pool
     save_pool(
         pool
     )
 
     print("=" * 55)
-    print("POOL SAVED SUCCESSFULLY")
+    print("POOL SAVED")
     print("DONE")
     print("=" * 55)
 
 
 if __name__ == "__main__":
-
     main()
