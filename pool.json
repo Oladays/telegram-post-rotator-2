@@ -1,6 +1,6 @@
 {
-  "last_update_id": 475878160,
-  "last_posted_id": 53,
+  "last_update_id": 475878164,
+  "last_posted_id": 32,
   "messages": [
     {
       "id": 4,
@@ -320,6 +320,33 @@
       "text": "40k to 344k ☕️☕️☕️☕️ from a new trader that just joined last week.",
       "file_id": "AgACAgQAAyEFAAStIrAHAAJMEmqEiAhjigG5IWILi1qZCureSLY2AAIfEWsbkKIoUIJCKWF1H38WAQADAgADeQADPQQ",
       "media_type": "photo"
+    },
+    {
+      "type": "single",
+      "id": 59,
+      "text": "Study 📚",
+      "file_id": "AgACAgQAAyEFAAMBAtI87AADO2qFbRrqsS-r8TNRvPoF7hI-m3aiAAKHD2sbUaYoUIW9jsZqnoIeAQADAgADeQADPQQ",
+      "media_type": "photo"
+    },
+    {
+      "type": "album",
+      "id": "album_14297032661430324",
+      "media_group_id": "14297032661430324",
+      "text": "Study 📚",
+      "items": [
+        {
+          "id": 57,
+          "file_id": "AgACAgQAAyEFAAMBAtI87AADOWqFbPpMWubuEUMmlXzIZijcxKmhAAKFD2sbUaYoUKIf6cDsvEzZAQADAgADeQADPQQ",
+          "media_type": "photo",
+          "text": "Study 📚"
+        },
+        {
+          "id": 58,
+          "file_id": "AgACAgQAAyEFAAMBAtI87AADOmqFbPrDEfDDoCQMWDozPQmripglAAKGD2sbUaYoUIBwepvKN4MzAQADAgADeQADPQQ",
+          "media_type": "photo",
+          "text": ""
+        }
+      ]
     }
   ],
   "last_posted_group_id": null
