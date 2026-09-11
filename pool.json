@@ -1,5 +1,5 @@
 {
-  "last_update_id": 475879505,
+  "last_update_id": 475879573,
   "last_posted_id": 9,
   "messages": [
     {
@@ -367,6 +367,13 @@
       "id": 62,
       "text": "Get your access b4 it’s too late.",
       "file_id": "AgACAgQAAyEFAAStIrAHAAJSs2qgBrdz3Y-r7N6g4A19o-GX77pQAAKAD2sb2g8BUYJV0JRQ3H2TAQADAgADeQADPQQ",
+      "media_type": "photo"
+    },
+    {
+      "type": "single",
+      "id": 63,
+      "text": "Congratulations man, am proud of you.",
+      "file_id": "AgACAgQAAyEFAAStIrAHAAJTpmqjHZVEsDC_yl1Pi6fCmZuXrTzIAALnD2sbb7oZUUBoZcdkQtbSAQADAgADeQADPQQ",
       "media_type": "photo"
     }
   ],
